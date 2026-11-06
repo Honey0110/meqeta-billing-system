@@ -277,8 +277,6 @@ def read_ink():
     waiter=AKASH
     service=ROOM SERVICE
     kot=501
-
-    Legacy helper. Fill to PMS now uses MariaDB.
     """
 
     if not INK_FILE.exists():
@@ -465,7 +463,7 @@ class BillingApp:
 
         self.status = tk.StringVar(value="Ready")
 
-        # Automation state
+        # Automation state.
         self.automation_running = False
         self.automation_job = None
         self.automation_token = 0
@@ -482,7 +480,7 @@ class BillingApp:
         # existing SQL schema does not contain them.
         self.extra_data = {}
 
-        # Build the original interface
+        # Build original interface.
         self.build_ui()
         self.bind_navigation()
 
@@ -506,511 +504,512 @@ class BillingApp:
             self.check_database_on_start
         )
 
-import tkinter as tk
-from tkinter import ttk, messagebox, simpledialog
-from pathlib import Path
-from datetime import datetime, date
-from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
-import calendar
-import copy
-import json
-import re
-import threading
-import ctypes
-import os
-import queue
-import sys
+    # ========================================================
+    # DATABASE STATUS
+    # ========================================================
 
-import mysql.connector
-from mysql.connector import Error
-
-import pyautogui
-import pyperclip
-
-
-# ============================================================
-# CONFIGURATION
-# ============================================================
-
-BASE = Path(__file__).resolve().parent
-INK_FILE = BASE / "ink.txt"
-
-# Existing JSON file is no longer used for database storage.
-# Keep food_bills.json as a backup of your old bills.
-
-DB_CONFIG = {
-    "host": "127.0.0.1",
-    "port": 3306,
-    "user": "billing_app",
-    "database": "meqeta_billing",
-    "connection_timeout": 5
-}
-
-# Internal automation timings
-INTERNAL_FIELD_DELAY_MS = 2000
-INTERNAL_DROPDOWN_HOLD_MS = 350
-
-# External automation timings
-TARGET_DELAY_MS = 3000
-EXTERNAL_FIELD_DELAY = 2
-EXTERNAL_DROPDOWN_DELAY = 0.4
-
-EXTERNAL_NEXT_KEY = "enter"
-
-PMS_FIELDS = (
-    "bill",
-    "date",
-    "waiter",
-    "service",
-    "kot"
-)
-
-DROPDOWN_FIELDS = (
-    "date",
-    "waiter",
-    "service"
-)
-
-pyautogui.FAILSAFE = True
-pyautogui.PAUSE = 0.1
-
-
-# ============================================================
-# DATABASE CONNECTION
-# ============================================================
-
-def get_db_connection():
-    """
-    Connect to the existing MariaDB database.
-
-    Password comes from the environment variable:
-        MEQETA_DB_PASSWORD
-    """
-
-    password = os.environ.get("MEQETA_DB_PASSWORD")
-
-    if not password:
-        raise RuntimeError(
-            "Database password is not configured.\n\n"
-            "In PowerShell, run:\n"
-            '$env:MEQETA_DB_PASSWORD = "YOUR_PASSWORD"\n\n'
-            "Then start this application from that terminal."
-        )
-
-    config = dict(DB_CONFIG)
-    config["password"] = password
-
-    return mysql.connector.connect(**config)
-
-
-def test_database_connection():
-    """
-    Test connectivity and verify required tables.
-    """
-
-    connection = None
-    cursor = None
-
-    try:
-        connection = get_db_connection()
-        cursor = connection.cursor()
-
-        cursor.execute("SHOW TABLES")
-        tables = {
-            row[0]
-            for row in cursor.fetchall()
-        }
-
-        required = {"bills", "bill_items"}
-
-        missing = required - tables
-
-        if missing:
-            raise RuntimeError(
-                "Missing database tables: "
-                + ", ".join(sorted(missing))
+    def check_database_on_start(self):
+        if test_database_connection():
+            self.status.set(
+                "MariaDB connected - meqeta_billing"
+            )
+        else:
+            self.status.set(
+                "Database connection unavailable"
             )
 
-        print("MariaDB connected successfully!")
-        print("Database: meqeta_billing")
-        print("Tables: bills, bill_items")
+    # ========================================================
+    # UI HELPERS
+    # ========================================================
 
-        return True
-
-    except (Error, RuntimeError) as error:
-        print("Database connection failed:", error)
-        return False
-
-    finally:
-        if cursor is not None:
-            cursor.close()
-
-        if connection is not None:
-            connection.close()
-
-
-# ============================================================
-# WINDOWS ACTIVE WINDOW DETECTION
-# ============================================================
-
-def active_window_handle():
-    try:
-        return ctypes.windll.user32.GetForegroundWindow()
-
-    except (AttributeError, OSError):
-        return None
-
-
-def root_window_handle(hwnd):
-    if not hwnd or sys.platform != "win32":
-        return None
-
-    try:
-        return ctypes.windll.user32.GetAncestor(hwnd, 2)
-
-    except (AttributeError, OSError):
-        return None
-
-
-# ============================================================
-# GENERAL HELPERS
-# ============================================================
-
-def num(value):
-    try:
-        result = Decimal(str(value).strip() or "0")
-
-        if not result.is_finite() or result < 0:
-            return Decimal("0")
-
-        return result
-
-    except (InvalidOperation, ValueError, TypeError):
-        return Decimal("0")
-
-
-def money(value):
-    return str(
-        Decimal(value).quantize(
-            Decimal("0.01"),
-            rounding=ROUND_HALF_UP
+    def label(self, parent, text, x, y, width=90):
+        tk.Label(
+            parent,
+            text=text,
+            bg=self.bg,
+            fg=self.blue,
+            anchor="e",
+            font=("Arial", 9, "bold")
+        ).place(
+            x=x,
+            y=y,
+            width=width,
+            height=24
         )
-    )
 
+    def entry(self, parent, key, x, y, width):
+        widget = tk.Entry(
+            parent,
+            textvariable=self.v[key],
+            font=("Arial", 10)
+        )
 
-def normalize_date(value):
-    value = str(value).strip()
+        widget.place(
+            x=x,
+            y=y,
+            width=width,
+            height=24
+        )
 
-    for fmt in (
-        "%d/%m/%Y",
-        "%d-%m-%Y",
-        "%Y-%m-%d"
+        self.fields[key] = widget
+        return widget
+
+    def combo(
+        self,
+        parent,
+        key,
+        values,
+        x,
+        y,
+        width,
+        readonly=False
     ):
-        try:
-            return datetime.strptime(
-                value, fmt
-            ).strftime("%d/%m/%Y")
-
-        except ValueError:
-            continue
-
-    raise ValueError(
-        f"Invalid date: {value}. Use DD/MM/YYYY."
-    )
-
-
-def optional_sql_date(value):
-    """
-    Convert a date string to a Python date,
-    or return None for an empty date.
-    """
-
-    value = str(value).strip()
-
-    if not value:
-        return None
-
-    normalized = normalize_date(value)
-
-    return datetime.strptime(
-        normalized, "%d/%m/%Y"
-    ).date()
-
-
-def sql_date_to_text(value):
-    if value is None:
-        return ""
-
-    if isinstance(value, (date, datetime)):
-        return value.strftime("%d/%m/%Y")
-
-    return normalize_date(value)
-
-
-def generate_date_options():
-    today = datetime.now()
-    dates = []
-
-    for offset in (-1, 0, 1):
-        month_index = (
-            today.year * 12
-            + today.month - 1
-            + offset
+        widget = ttk.Combobox(
+            parent,
+            textvariable=self.v[key],
+            values=values,
+            state=(
+                "readonly"
+                if readonly
+                else "normal"
+            ),
+            font=("Arial", 10)
         )
 
-        year, zero_month = divmod(month_index, 12)
-        month = zero_month + 1
+        widget.place(
+            x=x,
+            y=y,
+            width=width,
+            height=24
+        )
 
-        days = calendar.monthrange(year, month)[1]
+        self.fields[key] = widget
+        return widget
 
-        for day_number in range(1, days + 1):
-            dates.append(
-                f"{day_number:02d}/{month:02d}/{year}"
+    # ========================================================
+    # BUILD MAIN INTERFACE
+    # ========================================================
+
+    def build_ui(self):
+        top = tk.Frame(
+            self.root,
+            bg=self.bg,
+            height=215
+        )
+
+        top.pack(
+            side="top",
+            fill="x",
+            padx=12,
+            pady=(8, 0)
+        )
+
+        top.pack_propagate(False)
+
+        self.pms_button = tk.Button(
+            top,
+            text="Fill to PMS",
+            command=self.fill_to_pms,
+            bg="#a9d2f0",
+            fg="#17365d",
+            font=("Arial", 10, "bold"),
+            cursor="hand2"
+        )
+
+        self.pms_button.place(
+            relx=1,
+            x=-160,
+            y=8,
+            width=150,
+            height=35
+        )
+
+        tk.Label(
+            top,
+            textvariable=self.status,
+            bg=self.bg,
+            fg="#247044",
+            anchor="e",
+            font=("Arial", 9)
+        ).place(
+            relx=1,
+            x=-380,
+            y=48,
+            width=370,
+            height=22
+        )
+
+        # Bill number.
+        self.label(top, "Bill No :", 0, 10)
+        self.entry(top, "bill", 95, 10, 110)
+
+        tk.Button(
+            top,
+            text="Adding",
+            command=self.summary,
+            bg="#e9b5bb"
+        ).place(
+            x=215,
+            y=8,
+            width=85,
+            height=29
+        )
+
+        tk.Radiobutton(
+            top,
+            text="Current",
+            variable=self.mode,
+            value="Current",
+            bg=self.bg
+        ).place(x=310, y=10)
+
+        tk.Radiobutton(
+            top,
+            text="Previous",
+            variable=self.mode,
+            value="Previous",
+            bg=self.bg
+        ).place(x=390, y=10)
+
+        # Date dropdown.
+        self.label(top, "Date :", 0, 47)
+
+        self.combo(
+            top,
+            "date",
+            generate_date_options(),
+            95, 47, 135,
+            readonly=True
+        )
+
+        tk.Label(
+            top,
+            textvariable=self.v["time"],
+            bg="white",
+            relief="sunken"
+        ).place(
+            x=240,
+            y=47,
+            width=100,
+            height=24
+        )
+
+        # Waiter dropdown.
+        self.label(top, "Waiter :", 0, 84)
+
+        self.combo(
+            top,
+            "waiter",
+            ["AKASH", "RAHUL", "AMIT", "JOHN"],
+            95, 84, 195,
+            readonly=True
+        )
+
+        self.label(top, "Room No :", 300, 84, 90)
+
+        self.combo(
+            top,
+            "room",
+            ["101", "102", "201", "202"],
+            395, 84, 100
+        )
+
+        # Service type.
+        self.label(top, "Ser. Type :", 0, 121)
+
+        self.combo(
+            top,
+            "service",
+            [
+                "FOOD & BEVERAGES",
+                "ROOM SERVICE",
+                "RESTAURANT",
+                "TAKE AWAY"
+            ],
+            95, 121, 195,
+            readonly=True
+        )
+
+        self.label(top, "Reg No :", 300, 121, 90)
+        self.entry(top, "reg", 395, 121, 100)
+
+        # KOT.
+        self.label(top, "KOT No :", 0, 158)
+        self.entry(top, "kot", 95, 158, 125)
+
+        # Guest details.
+        ttk.Separator(
+            top,
+            orient="vertical"
+        ).place(
+            x=510,
+            y=5,
+            height=195
+        )
+
+        self.label(top, "Guest :", 520, 10)
+        self.entry(top, "guest", 615, 10, 350)
+
+        self.label(top, "Company :", 520, 47)
+        self.entry(top, "company", 615, 47, 350)
+
+        self.label(top, "Arr. Date :", 520, 84)
+        self.entry(top, "arrival", 615, 84, 125)
+        self.entry(
+            top,
+            "arrival_time",
+            748, 84, 85
+        )
+
+        self.label(top, "Dep. Date :", 520, 121)
+        self.entry(
+            top,
+            "departure",
+            615, 121, 125
+        )
+        self.entry(
+            top,
+            "departure_time",
+            748, 121, 85
+        )
+
+        self.label(top, "Stay Plan :", 520, 158)
+
+        self.combo(
+            top,
+            "stay",
+            ["MAP", "AP", "CP", "EP"],
+            615, 158, 150
+        )
+
+        bottom = tk.Frame(
+            self.root,
+            bg=self.bg,
+            height=215
+        )
+
+        bottom.pack(
+            side="bottom",
+            fill="x",
+            padx=12,
+            pady=6
+        )
+
+        bottom.pack_propagate(False)
+
+        self.create_bottom(bottom)
+        self.create_table()
+
+    # ========================================================
+    # FILL TO PMS
+    # ========================================================
+
+    def fill_to_pms(self):
+        if self.automation_running:
+            return
+
+        try:
+            self.automation_data = read_ink()
+
+        except (OSError, ValueError) as error:
+            messagebox.showerror(
+                "Automation Error",
+                str(error)
+            )
+            return
+
+        self.automation_running = True
+        self.external_cancel.clear()
+
+        self.automation_token += 1
+        token = self.automation_token
+
+        self.set_controls(False)
+
+        self.status.set(
+            "Place cursor in destination. "
+            "Starting in 3 seconds..."
+        )
+
+        self.automation_job = self.root.after(
+            TARGET_DELAY_MS,
+            lambda: self.detect_target(token)
+        )
+
+    def detect_target(self, token):
+        if token != self.automation_token:
+            return
+
+        if not self.automation_running:
+            return
+
+        self.automation_job = None
+
+        active_handle = active_window_handle()
+
+        try:
+            own_handle = self.root.winfo_id()
+
+            own_root = root_window_handle(
+                own_handle
             )
 
-    return dates
+            active_root = root_window_handle(
+                active_handle
+            )
 
+            is_internal = (
+                active_root == own_root
+                and active_root is not None
+            )
 
-# ============================================================
-# READ ink.txt
-# ============================================================
+        except tk.TclError:
+            is_internal = False
 
-def read_ink():
-    """
-    Supported ink.txt:
+        if is_internal or sys.platform != "win32":
+            self.start_internal_automation(token)
+        else:
+            self.start_external_automation(token)
 
-    bill=1001
-    date=05/11/2026
-    waiter=AKASH
-    service=ROOM SERVICE
-    kot=501
+    # ========================================================
+    # INTERNAL AUTOMATION
+    # ========================================================
 
-    Legacy helper. Fill to PMS now uses MariaDB.
-    """
+    def start_internal_automation(self, token):
+        self.automation_index = 0
 
-    if not INK_FILE.exists():
-        raise FileNotFoundError(
-            f"ink.txt not found:\n{INK_FILE}"
+        for key in DROPDOWN_FIELDS:
+            widget = self.fields[key]
+            options = list(widget["values"])
+            value = self.automation_data[key]
+
+            match = next(
+                (
+                    option for option in options
+                    if str(option).casefold()
+                    == str(value).casefold()
+                ),
+                None
+            )
+
+            if match is None:
+                options.append(value)
+                widget["values"] = options
+            else:
+                self.automation_data[key] = match
+
+        self.status.set(
+            "Internal automation started..."
         )
 
-    content = INK_FILE.read_text(
-        encoding="utf-8-sig"
-    ).strip()
+        self.fill_internal_field(token)
 
-    if not content:
-        raise ValueError("ink.txt is empty.")
+    def fill_internal_field(self, token):
+        if token != self.automation_token:
+            return
 
-    aliases = {
-        "bill": "bill",
-        "billno": "bill",
-        "billnumber": "bill",
-        "billid": "bill",
+        if not self.automation_running:
+            return
 
-        "date": "date",
-        "billdate": "date",
+        self.automation_job = None
 
-        "waiter": "waiter",
-        "waitername": "waiter",
+        if self.automation_index >= len(PMS_FIELDS):
+            self.finish_automation(
+                "Internal automation completed."
+            )
+            return
 
-        "service": "service",
-        "servicetype": "service",
-        "sertype": "service",
+        key = PMS_FIELDS[self.automation_index]
+        value = self.automation_data[key]
 
-        "kot": "kot",
-        "kotno": "kot",
-        "kotnumber": "kot"
-    }
+        widget = self.fields[key]
+        widget.focus_set()
 
-    data = {}
+        if key in DROPDOWN_FIELDS:
+            self.select_internal_dropdown(
+                key, value, token
+            )
+            return
 
-    def add_value(raw_key, value):
-        key = re.sub(
-            r"[^a-z0-9]",
-            "",
-            str(raw_key).lower()
-        )
+        self.v[key].set(value)
 
-        mapped = aliases.get(key)
-
-        if mapped and value is not None:
-            value = str(value).strip()
-
-            if value:
-                data[mapped] = value
-
-    if content.startswith("{"):
         try:
-            parsed = json.loads(content)
-
-            if isinstance(parsed, dict):
-                for key, value in parsed.items():
-                    add_value(key, value)
-
-        except json.JSONDecodeError:
+            widget.icursor("end")
+        except tk.TclError:
             pass
 
-    if not data:
-        for line in content.splitlines():
-            line = line.strip()
-
-            if not line or line.startswith(
-                ("#", ";", "//")
-            ):
-                continue
-
-            match = re.match(
-                r"^([^=:]+?)\s*[:=]\s*(.*)$",
-                line
-            )
-
-            if match:
-                add_value(
-                    match.group(1),
-                    match.group(2)
-                )
-
-    missing = [
-        key for key in PMS_FIELDS
-        if not data.get(key)
-    ]
-
-    if missing:
-        raise ValueError(
-            "Missing ink.txt fields: "
-            + ", ".join(missing)
+        self.status.set(
+            f"Filled {key.upper()}: {value}"
         )
 
-    data["date"] = normalize_date(data["date"])
+        self.next_internal_field(token)
 
-    return data
+    def select_internal_dropdown(
+        self, key, value, token
+    ):
+        widget = self.fields[key]
+        options = list(widget["values"])
 
-
-# ============================================================
-# MAIN APPLICATION
-# ============================================================
-
-class BillingApp:
-
-    def __init__(self, root):
-        self.root = root
-
-        self.root.title(
-            "Food & Beverages Billing Entry"
+        index = next(
+            (
+                i for i, option in enumerate(options)
+                if str(option).casefold()
+                == str(value).casefold()
+            ),
+            None
         )
 
-        self.root.geometry("1180x780")
-        self.root.minsize(1050, 680)
+        if index is None:
+            options.append(value)
+            widget["values"] = options
+            index = len(options) - 1
 
-        self.bg = "#e8e8e8"
-        self.blue = "#253e70"
+        try:
+            widget.event_generate("<Alt-Down>")
+        except tk.TclError:
+            pass
 
-        self.root.configure(bg=self.bg)
+        def choose_option():
+            if token != self.automation_token:
+                return
 
-        names = [
-            "bill",
-            "date",
-            "time",
-            "waiter",
-            "service",
-            "room",
-            "reg",
-            "kot",
-            "guest",
-            "company",
-            "arrival",
-            "arrival_time",
-            "departure",
-            "departure_time",
-            "stay",
-            "detail"
-        ]
+            if not self.automation_running:
+                return
 
-        self.v = {
-            key: tk.StringVar()
-            for key in names
-        }
+            self.automation_job = None
 
-        self.mode = tk.StringVar(value="Current")
-        self.paid = tk.BooleanVar(value=False)
+            widget.current(index)
 
-        self.charges = {
-            key: tk.StringVar(value="0")
-            for key in (
-                "discount",
-                "service_charge",
-                "cgst",
-                "sgst",
-                "cess"
+            try:
+                widget.event_generate("<Escape>")
+            except tk.TclError:
+                pass
+
+            self.status.set(
+                f"Selected {key.upper()}: {value}"
             )
-        }
 
-        self.totals = {
-            key: tk.StringVar(value="0.00")
-            for key in (
-                "qty",
-                "total",
-                "cgst_amount",
-                "sgst_amount",
-                "cess_amount",
-                "round_off",
-                "net"
-            )
-        }
+            self.next_internal_field(token)
 
-        self.fields = {}
-        self.rows = []
-        self.cells = []
-        self.row_frames = []
-        self.action_buttons = []
-
-        self.table_keys = (
-            "code",
-            "item",
-            "qty",
-            "rate"
+        self.automation_job = self.root.after(
+            INTERNAL_DROPDOWN_HOLD_MS,
+            choose_option
         )
 
-        self.status = tk.StringVar(value="Ready")
+    def next_internal_field(self, token):
+        self.automation_index += 1
 
-        # Automation state
-        self.automation_running = False
-        self.automation_job = None
-        self.automation_token = 0
-        self.automation_index = 0
-        self.automation_data = {}
+        if self.automation_index >= len(PMS_FIELDS):
+            self.fields["kot"].focus_set()
 
-        self.external_cancel = threading.Event()
-        self.external_thread = None
-        self.external_results = queue.Queue()
-
-        self.closing = False
-
-        # Extra fields retained in memory because the
-        # existing SQL schema does not contain them.
-        self.extra_data = {}
-
-        # Build the original interface
-        self.build_ui()
-        self.bind_navigation()
-
-        for variable in self.charges.values():
-            variable.trace_add(
-                "write",
-                lambda *_: self.calculate()
+            self.finish_automation(
+                "Internal automation completed."
             )
+            return
 
-        self.calculate()
-        self.clock()
-        self.poll_external_results()
-
-        self.root.protocol(
-            "WM_DELETE_WINDOW",
-            self.close_app
-        )
-
-        self.root.after(
-            300,
-            self.check_database_on_start
+        self.automation_job = self.root.after(
+            INTERNAL_FIELD_DELAY_MS,
+            lambda: self.fill_internal_field(token)
         )
 
     # ========================================================
@@ -1816,18 +1815,12 @@ class BillingApp:
         return data
 
     # ========================================================
-    # DATABASE READ HELPERS - UPDATED
+    # DATABASE READ HELPERS
     # ========================================================
 
     def get_bill_from_database(self, bill_no):
         """
-        Fetch a bill and all associated items.
-
-        If bill_no is None:
-            Fetch the latest inserted bill.
-
-        Otherwise:
-            Fetch the specified bill number.
+        Fetch the main bill and all its items.
 
         Returns a dictionary compatible with load_data().
         """
@@ -1839,30 +1832,15 @@ class BillingApp:
             connection = get_db_connection()
             cursor = connection.cursor(dictionary=True)
 
-            # ==========================================
-            # LATEST BILL OR SPECIFIC BILL
-            # ==========================================
-
-            if bill_no is None:
-                # Highest ID = most recently inserted bill
-                cursor.execute(
-                    "SELECT * FROM bills "
-                    "ORDER BY id DESC LIMIT 1"
-                )
-            else:
-                cursor.execute(
-                    "SELECT * FROM bills WHERE bill_no = %s",
-                    (bill_no,)
-                )
+            cursor.execute(
+                "SELECT * FROM bills WHERE bill_no = %s",
+                (bill_no,)
+            )
 
             bill = cursor.fetchone()
 
             if bill is None:
                 return None
-
-            # ==========================================
-            # FETCH BILL ITEMS
-            # ==========================================
 
             cursor.execute(
                 """
@@ -1880,10 +1858,6 @@ class BillingApp:
             )
 
             items = cursor.fetchall()
-
-            # ==========================================
-            # CONVERT DATABASE RECORD TO FORM DATA
-            # ==========================================
 
             data = {
                 "bill": bill["bill_no"],
@@ -1922,10 +1896,6 @@ class BillingApp:
                 "items": []
             }
 
-            # ==========================================
-            # CONVERT DATABASE ITEMS TO TABLE ROWS
-            # ==========================================
-
             for item in items:
                 data["items"].append({
                     "code": item["item_code"] or "",
@@ -1949,26 +1919,6 @@ class BillingApp:
 
             if connection is not None:
                 connection.close()
-
-    # ========================================================
-    # GET LATEST BILL - NEW FUNCTION
-    # ========================================================
-
-    def get_latest_bill_from_database(self):
-        """
-        Retrieve the latest inserted bill from MariaDB.
-
-        This is used automatically by Fill to PMS.
-
-        It does not depend on the bill number currently
-        displayed in the application.
-        """
-
-        return self.get_bill_from_database(None)
-
-    # ========================================================
-    # CHECK WHETHER BILL EXISTS
-    # ========================================================
 
     def bill_exists(self, bill_no):
         connection = None
@@ -2389,219 +2339,70 @@ class BillingApp:
             )
 
     # ========================================================
-    # SAVE / UPDATE BILL
+    # DELETE BILL
     # ========================================================
 
-    def save_bill(self):
+    def delete_bill(self):
         if self.automation_running:
             return
 
-        data = self.collect_data()
-        bill_no = data["bill"].strip()
+        bill_no = self.v["bill"].get().strip()
 
         if not bill_no:
             messagebox.showwarning(
-                "Save",
-                "Bill No is required."
+                "Delete",
+                "Enter the Bill No."
             )
+            return
+
+        if not messagebox.askyesno(
+            "Delete",
+            f"Delete bill {bill_no} permanently?"
+        ):
             return
 
         connection = None
         cursor = None
 
         try:
-            bill_date = optional_sql_date(
-                data["date"]
-            )
-
-            # Validate item values before writing.
-            for index, item in enumerate(
-                data["items"], start=1
-            ):
-                for key in ("qty", "rate"):
-                    raw = item[key].strip()
-
-                    if raw:
-                        try:
-                            value = Decimal(raw)
-
-                            if (
-                                not value.is_finite()
-                                or value < 0
-                            ):
-                                raise ValueError
-
-                        except (
-                            InvalidOperation,
-                            ValueError
-                        ):
-                            raise ValueError(
-                                f"Invalid {key} in "
-                                f"item row {index}."
-                            )
-
             connection = get_db_connection()
             connection.start_transaction()
 
             cursor = connection.cursor()
 
-            # Lock an existing bill during update.
             cursor.execute(
                 """
-                SELECT id
-                FROM bills
+                DELETE FROM bills
                 WHERE bill_no = %s
-                FOR UPDATE
                 """,
                 (bill_no,)
             )
 
-            existing = cursor.fetchone()
-
-            values = (
-                bill_date,
-                data["waiter"],
-                data["service"],
-                data["kot"],
-                data["room"],
-                data["reg"],
-                data["guest"],
-                data["company"],
-                data["detail"],
-                int(data["paid"]),
-                num(data["totals"]["total"]),
-                num(data["charges"]["discount"]),
-                num(data["charges"]["service_charge"]),
-                num(data["charges"]["cgst"]),
-                num(data["charges"]["sgst"]),
-                num(data["charges"]["cess"]),
-                num(data["totals"]["net"])
-            )
-
-            if existing:
-                bill_id = existing[0]
-
-                if not messagebox.askyesno(
-                    "Overwrite",
-                    f"Bill {bill_no} already exists.\n"
-                    "Overwrite it?"
-                ):
-                    connection.rollback()
-                    return
-
-                cursor.execute(
-                    """
-                    UPDATE bills
-                    SET
-                        bill_date = %s,
-                        waiter = %s,
-                        service_type = %s,
-                        kot_no = %s,
-                        room_no = %s,
-                        reg_no = %s,
-                        guest_name = %s,
-                        company = %s,
-                        payment_method = %s,
-                        paid = %s,
-                        subtotal = %s,
-                        discount = %s,
-                        service_charge = %s,
-                        cgst_rate = %s,
-                        sgst_rate = %s,
-                        cess_rate = %s,
-                        net_amount = %s
-                    WHERE id = %s
-                    """,
-                    values + (bill_id,)
-                )
-
-                cursor.execute(
-                    """
-                    DELETE FROM bill_items
-                    WHERE bill_id = %s
-                    """,
-                    (bill_id,)
-                )
-
-            else:
-                cursor.execute(
-                    """
-                    INSERT INTO bills (
-                        bill_no,
-                        bill_date,
-                        waiter,
-                        service_type,
-                        kot_no,
-                        room_no,
-                        reg_no,
-                        guest_name,
-                        company,
-                        payment_method,
-                        paid,
-                        subtotal,
-                        discount,
-                        service_charge,
-                        cgst_rate,
-                        sgst_rate,
-                        cess_rate,
-                        net_amount
-                    )
-                    VALUES (
-                        %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s,
-                        %s, %s, %s, %s, %s, %s
-                    )
-                    """,
-                    (bill_no,) + values
-                )
-
-                bill_id = cursor.lastrowid
-
-            for item in data["items"]:
-                qty = num(item["qty"])
-                rate = num(item["rate"])
-
-                amount = (
-                    qty * rate
-                ).quantize(
-                    Decimal("0.01"),
-                    rounding=ROUND_HALF_UP
-                )
-
-                cursor.execute(
-                    """
-                    INSERT INTO bill_items (
-                        bill_id,
-                        item_code,
-                        item_name,
-                        quantity,
-                        rate,
-                        amount
-                    )
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                    """,
-                    (
-                        bill_id,
-                        item["code"],
-                        item["item"],
-                        qty,
-                        rate,
-                        amount
-                    )
-                )
+            deleted = cursor.rowcount
 
             connection.commit()
 
+            if deleted == 0:
+                messagebox.showinfo(
+                    "Delete",
+                    "Bill not found."
+                )
+                return
+
+            # bill_items are deleted automatically
+            # through the ON DELETE CASCADE relation.
+            self.clear_form()
+
             self.status.set(
-                f"Bill {bill_no} saved to MariaDB."
+                f"Bill {bill_no} deleted from MariaDB."
             )
 
             messagebox.showinfo(
-                "Saved",
-                f"Bill {bill_no} saved successfully."
+                "Deleted",
+                f"Bill {bill_no} deleted successfully."
             )
 
-        except (Error, RuntimeError, ValueError) as error:
+        except (Error, RuntimeError) as error:
             if connection is not None:
                 connection.rollback()
 
@@ -2618,173 +2419,230 @@ class BillingApp:
                 connection.close()
 
     # ========================================================
-    # LOAD BILL
+    # CLEAR FORM
     # ========================================================
 
-    def load_data(self, data):
-        self.clear_form()
+    def clear_form(self):
+        if self.automation_running:
+            return
 
-        for key in self.v:
-            if key in data and key != "time":
-                self.v[key].set(data[key])
+        for key, variable in self.v.items():
+            if key != "time":
+                variable.set("")
 
-        for key in DROPDOWN_FIELDS:
-            value = self.v[key].get()
+        self.mode.set("Current")
+        self.paid.set(False)
 
-            if value:
-                widget = self.fields[key]
-                options = list(widget["values"])
+        for variable in self.charges.values():
+            variable.set("0")
 
-                if value not in options:
-                    options.append(value)
-                    widget["values"] = options
-
-        self.mode.set(
-            data.get("mode", "Current")
-        )
-
-        self.paid.set(
-            bool(data.get("paid", False))
-        )
-
-        for key, value in data.get(
-            "charges", {}
-        ).items():
-            if key in self.charges:
-                self.charges[key].set(str(value))
-
-        items = data.get("items", [])
-
-        while len(self.rows) < len(items):
-            self.add_row()
-
-        for index, item in enumerate(items):
-            for key in self.table_keys:
-                self.rows[index][key].set(
-                    str(item.get(key, ""))
-                )
+        for row in self.rows:
+            for variable in row.values():
+                variable.set("")
 
         self.calculate()
+        self.status.set("Ready")
 
     # ========================================================
-    # FIND BILL
+    # SUMMARY
     # ========================================================
 
-    def find_bill(self):
-        if self.automation_running:
-            return
+    def summary(self):
+        data = self.collect_data()
 
-        bill_no = simpledialog.askstring(
-            "Find Bill",
-            "Enter Bill No:",
-            parent=self.root
+        window = tk.Toplevel(self.root)
+        window.title("Bill Summary")
+        window.geometry("650x500")
+
+        text = tk.Text(
+            window,
+            font=("Consolas", 10),
+            wrap="word"
         )
 
-        if not bill_no:
-            return
+        text.pack(
+            fill="both",
+            expand=True
+        )
 
-        bill_no = bill_no.strip()
+        text.insert(
+            "end",
+            json.dumps(
+                data,
+                indent=2,
+                ensure_ascii=False
+            )
+        )
 
-        try:
-            data = self.get_bill_from_database(
-                bill_no
+        text.config(state="disabled")
+
+    # ========================================================
+    # PRINT PREVIEW
+    # ========================================================
+
+    def print_bill(self):
+        data = self.collect_data()
+
+        window = tk.Toplevel(self.root)
+        window.title("Print Preview")
+        window.geometry("650x550")
+
+        text = tk.Text(
+            window,
+            font=("Consolas", 10)
+        )
+
+        text.pack(
+            fill="both",
+            expand=True
+        )
+
+        text.insert(
+            "end",
+            "FOOD & BEVERAGES BILL\n"
+            "============================\n\n"
+        )
+
+        for key in (
+            "bill",
+            "date",
+            "waiter",
+            "service",
+            "room",
+            "reg",
+            "kot",
+            "guest"
+        ):
+            text.insert(
+                "end",
+                f"{key.upper()}: "
+                f"{data.get(key, '')}\n"
             )
 
-            if data is None:
-                messagebox.showinfo(
-                    "Find",
-                    "Bill not found in MariaDB."
+        text.insert(
+            "end",
+            "\nITEMS\n"
+            "----------------------------\n"
+        )
+
+        for item in data["items"]:
+            text.insert(
+                "end",
+                f"{item['item']} "
+                f"{item['qty']} x "
+                f"{item['rate']} "
+                f"= {item['amount']}\n"
+            )
+
+        text.insert(
+            "end",
+            "\nNET AMOUNT: "
+            + data["totals"]["net"]
+        )
+
+    # ========================================================
+    # FORM NAVIGATION
+    # ========================================================
+
+    def bind_navigation(self):
+        order = [
+            "bill",
+            "date",
+            "waiter",
+            "service",
+            "kot",
+            "room",
+            "reg",
+            "guest",
+            "company",
+            "arrival",
+            "arrival_time",
+            "departure",
+            "departure_time",
+            "stay",
+            "detail"
+        ]
+
+        self.form_order = [
+            self.fields[key]
+            for key in order
+        ]
+
+        for widget in self.form_order:
+            for event in ("<Return>", "<Tab>"):
+                widget.bind(
+                    event,
+                    lambda e: self.move_form(e, 1)
                 )
-                return
 
-            self.load_data(data)
-
-            self.status.set(
-                f"Loaded bill {bill_no} from MariaDB."
+            widget.bind(
+                "<Shift-Tab>",
+                lambda e: self.move_form(e, -1)
             )
 
-        except (Error, RuntimeError, ValueError) as error:
-            messagebox.showerror(
-                "Database Error",
-                str(error)
-            )
+            if not isinstance(widget, ttk.Combobox):
+                widget.bind(
+                    "<Down>",
+                    lambda e: self.move_form(e, 1)
+                )
 
-    # ========================================================
-    # CLONE BILL
-    # ========================================================
+                widget.bind(
+                    "<Up>",
+                    lambda e: self.move_form(e, -1)
+                )
 
-    def clone_bill(self):
+    def move_form(self, event, direction):
         if self.automation_running:
+            return "break"
+
+        index = (
+            self.form_order.index(event.widget)
+            + direction
+        )
+
+        if index >= len(self.form_order):
+            self.focus_cell(0, 0)
+
+        elif index >= 0:
+            widget = self.form_order[index]
+            widget.focus_set()
+
+            try:
+                widget.selection_range(0, "end")
+            except tk.TclError:
+                pass
+
+        return "break"
+
+    # ========================================================
+    # CLOCK
+    # ========================================================
+
+    def clock(self):
+        if self.closing:
             return
 
-        old_bill = self.v["bill"].get().strip()
+        self.v["time"].set(
+            datetime.now().strftime("%H:%M:%S")
+        )
 
-        if not old_bill:
-            messagebox.showwarning(
-                "Clone",
-                "Enter the original Bill No first."
-            )
-            return
+        self.root.after(
+            1000,
+            self.clock
+        )
 
-        try:
-            original = self.get_bill_from_database(
-                old_bill
-            )
+    # ========================================================
+    # EXIT
+    # ========================================================
 
-            if original is None:
-                messagebox.showwarning(
-                    "Clone",
-                    "Original bill not found in MariaDB."
-                )
-                return
+    def close_app(self):
+        self.closing = True
+        self.cancel_automation()
+        self.root.destroy()
 
-            new_bill = simpledialog.askstring(
-                "Clone Bill",
-                "Enter new Bill No:",
-                parent=self.root
-            )
 
-            if not new_bill:
-                return
-
-            new_bill = new_bill.strip()
-
-            if not new_bill:
-                messagebox.showwarning(
-                    "Clone",
-                    "New Bill No cannot be empty."
-                )
-                return
-
-            if self.bill_exists(new_bill):
-                messagebox.showwarning(
-                    "Clone",
-                    "New Bill No already exists."
-                )
-                return
-
-            cloned = copy.deepcopy(original)
-            cloned["bill"] = new_bill
-
-            self.load_data(cloned)
-
-            self.status.set(
-                f"Cloned {old_bill} to {new_bill}. "
-                "Click Save."
-            )
-
-            messagebox.showinfo(
-                "Clone",
-                "Bill cloned.\nClick Save to store it."
-            )
-
-        except (Error, RuntimeError, ValueError) as error:
-            messagebox.showerror(
-                "Database Error",
-                str(error)
-            )
 # ============================================================
-# APPLICATION STARTUP
+# START APPLICATION
 # ============================================================
 
 if __name__ == "__main__":
