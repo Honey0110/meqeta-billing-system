@@ -1,0 +1,47 @@
+
+# ==========================================
+# MEQETA BILLING SYSTEM - GITIGNORE
+# ==========================================
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+
+# Python virtual environments
+venv/
+.venv/
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Customer billing records
+food_bills.json
+
+# Private PMS data
+ink.txt
+pms_exports/
+
+# Environment variables and passwords
+.env
+.env.*
+!.env.example
+*credentials*
+*secrets*
+
+# SQL backups and dumps
+*.sql
+*.sql.gz
+
+# Temporary files
+*.log
+*.tmp
+
+# VS Code local settings
+.vscode/
+
+# Windows system files
+Thumbs.db
+Desktop.ini
