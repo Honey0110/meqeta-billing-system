@@ -2783,3 +2783,11 @@ class BillingApp:
                 "Database Error",
                 str(error)
             )
+# ============================================================
+# APPLICATION STARTUP
+# ============================================================
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = BillingApp(root)
+    root.mainloop()
